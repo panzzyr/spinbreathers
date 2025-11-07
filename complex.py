@@ -34,7 +34,7 @@ ATOMIC_PERIODS = 5
 J_EXCHANGE = 1.0                 # Используется как масштабный множитель
 D_DMI = 0.16                     # Параметр D/2J
 A_ANISOTROPY = 0.15              # Параметр A/2J (анизотропия "легкая плоскость")
-H_EFF = 0.35                      # Параметр H/2J (докритическое поле)
+H_EFF = 0.1                      # Параметр H/2J (докритическое поле)
 
 # --- Параметры связи и масштабирования ---
 B_ME_COUPLING = 0.5              # Константа магнитоэлектрической связи
@@ -264,9 +264,13 @@ def render_frame(frame_idx, t_vals, Sz_data, Sx_data, Sy_data, energies, pump_fu
     ax2 = axs[0, 1]
     ax2.plot(lattice_points, Sz_data[:, frame_idx], 'o-', color='royalblue'); ax2.set_title('2. Эволюция S_z компоненты'); ax2.set_xlabel('Узел (p)'); ax2.set_ylabel('S_z'); ax2.set_ylim(-1.05, 1.05); ax2.grid(True, linestyle='--', alpha=0.6)
 
+    # --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
     ax3 = fig.add_subplot(2, 2, 3, projection='3d'); ax3.set_title('3. 3D представление спинов')
-    ax3.quiver(lattice_points, 0, 0, Sx_data[:, frame_idx], Sy_data[:, frame_idx], Sz_data[:, frame_idx], length=0.8, normalize=True)
-    ax3.set_xlim(0, N); ax3.set_ylim(-1, 1); ax3.set_zlim(-1, 1); ax3.set_xlabel('Узел (p)'); ax3.set_ylabel('S_y'); ax3.set_zlabel('S_z'); ax3.view_init(elev=20, azim=-75)
+    # Меняем порядок компонент: ось X графика теперь представляет Sz, а Y и Z - это Sx и Sy
+    ax3.quiver(lattice_points, 0, 0, Sz_data[:, frame_idx], Sx_data[:, frame_idx], Sy_data[:, frame_idx], length=0.8, normalize=True)
+    # Обновляем подписи осей и ракурс
+    ax3.set_xlim(0, N); ax3.set_ylim(-1, 1); ax3.set_zlim(-1, 1); ax3.set_xlabel('Узел (p)'); ax3.set_ylabel('S_x'); ax3.set_zlabel('S_y'); ax3.view_init(elev=30, azim=-120)
+    # --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
     ax4 = axs[1, 1]
     ax4.plot(t_vals[:frame_idx+1], energies[:frame_idx+1], color='crimson'); ax4.set_title('4. Эволюция полной энергии'); ax4.set_xlabel('Время (t)'); ax4.set_ylabel('Энергия (E/2J)'); ax4.set_xlim(0, t_vals[-1]); ax4.set_ylim(energy_ylim); ax4.grid(True, linestyle='--', alpha=0.6)
