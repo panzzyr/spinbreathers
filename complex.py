@@ -21,8 +21,8 @@ from tqdm import tqdm
 
 # --- Параметры решетки и симуляции ---
 N_SITES = 101
-T_MAGNETIC_END = 100.0
-FRAME_COUNT = 100
+T_MAGNETIC_END = 300.0
+FRAME_COUNT = 400
 RESULTS_FOLDER_PREFIX = "breather_run"
 
 # --- Физические параметры: Атомная подсистема (модель ФПУ) ---
@@ -34,7 +34,7 @@ ATOMIC_PERIODS = 5
 J_EXCHANGE = 1.0                 # Используется как масштабный множитель
 D_DMI = 0.16                     # Параметр D/2J
 A_ANISOTROPY = 0.15              # Параметр A/2J (анизотропия "легкая плоскость")
-H_EFF = 0.33                      # Параметр H/2J (докритическое поле)
+H_EFF = 0.33                      # Параметр H/2J (поле)
 
 # --- Параметры связи и масштабирования ---
 B_ME_COUPLING = 0.15              # Константа магнитоэлектрической связи
@@ -42,9 +42,9 @@ ENABLE_ME_COUPLING = True        # Включено для проверки мо
 TIME_SCALING_FACTOR = 1.0        # t_atomic = K * t_magnetic
 
 # --- Параметры численного решателя ---
-SOLVER_METHOD = 'Radau'
+SOLVER_METHOD = 'DOP853'
 SOLVER_RTOL = 1e-6
-SOLVER_ATOL = 1e-6
+SOLVER_ATOL = 0
 
 # --- Технические константы ---
 EPSILON = 1e-12                  # Малая константа для избежания деления на ноль
@@ -137,53 +137,62 @@ def get_atomic_pumping_function(N, omega):
 
 def calculate_initial_state_cartesian(N, d, a, h, b_me, pump_func):
     """
-    Расчет начального статического состояния с учетом МАКСИМАЛЬНОЙ
-    деформации от атомного бризера.
+    Расчет гибридного начального состояния:
+    - Центральные 5 узлов: конусная фаза, рассчитанная из ЛОКАЛЬНОЙ деформации.
+    - Остальные узлы: принудительное ферромагнитное состояние.
     """
-    logging.info("-> Шаг 2: Расчет начального состояния (конусная фаза под влиянием бризера)...")
+    logging.info("-> Шаг 2: Расчет гибридного начального состояния (локализованный бризер)...")
 
-    # 1. Получаем профиль максимальных амплитуд атомных колебаний
-    # cos(omega*t) = 1, поэтому берем только амплитудную часть
-    p_indices = np.arange(N)
+    # --- Шаг 1: Инициализируем всю цепочку в ФМ состоянии (theta=0) ---
+    Sx0 = np.zeros(N)
+    Sy0 = np.zeros(N)
+    logging.info("   ...Вся цепочка инициализирована в ФМ состоянии (Sx=0, Sy=0).")
+
+    # --- Шаг 2: Определяем центральные 5 узлов для модификации ---
+    center_idx = N // 2
+    # Создаем срез для 5 центральных элементов
+    central_indices = np.arange(center_idx - 2, center_idx + 3)
+    logging.info(f"   ...Будут модифицированы центральные узлы с индексами: {central_indices}.")
+
+    # --- Шаг 3: Рассчитываем профиль максимальных амплитуд для вычисления деформации ---
+    p_indices_all = np.arange(N)
     q_p_max_amplitudes = pump_func.staggered_factors * pump_func.profile_amplitudes
+    q_p1_max = np.roll(q_p_max_amplitudes, -1)
+    q_m1_max = np.roll(q_p_max_amplitudes, 1)
+    q_p1_max[-1], q_m1_max[0] = 0, 0 # Граничные условия
 
-    # 2. Рассчитываем профиль максимальной деформации (strain)
-    q_p1 = np.roll(q_p_max_amplitudes, -1)
-    q_m1 = np.roll(q_p_max_amplitudes, 1)
-    q_p1[-1], q_m1[0] = 0, 0 # Граничные условия
-    max_strain_profile = q_p1 - q_m1
+    # --- Шаг 4: Цикл только по центральным узлам для расчета их локального угла theta_p ---
+    q_spiral = np.arctan(-d) # Спиральный вектор q постоянен для всей системы
 
-    # 3. Находим максимальное значение деформации по всей решетке
-    max_strain_value = max_strain_profile[np.argmax(np.abs(max_strain_profile))]
-    logging.info(f"   ...Максимальная статическая деформация от бризера: {max_strain_value:.4f}")
+    for p in central_indices:
+        # 4.1. Вычисляем локальную максимальную деформацию для узла p
+        local_max_strain = q_p1_max[p] - q_m1_max[p]
 
-    # 4. Модифицируем анизотропию для расчета начального состояния
-    a_eff_at_max_strain = a + b_me * max_strain_value
-    logging.info(f"   ...Статическая анизотропия A/2J={a:.3f} -> Эффективная A_eff/2J={a_eff_at_max_strain:.3f}")
+        # 4.2. Вычисляем локальную эффективную анизотропию (взял модуль деформации)
+        a_eff_local = a + b_me * np.abs(local_max_strain)
 
-    # 5. Расчет критического поля с новой эффективной анизотропией
-    # Эта формула соответствует вашим рукописным выкладкам (знаменатель для cos(theta))
-    denominator = 2 * (np.sqrt(1 + d**2) - 1) + 2 * a_eff_at_max_strain
+        # 4.3. Расчет локального критического поля и угла theta_p
+        denominator = 2 * (np.sqrt(1 + d**2) - 1) + 2 * a_eff_local
 
-    if h > abs(denominator):
-        logging.info(f"   ...Обнаружено сверхкритическое поле (H={h:.3f} > H_crit_eff={denominator:.3f}). Устанавливается ФМ состояние.")
-        theta0 = 0.0
-        q_spiral = 0.0
-    else:
-        logging.info(f"   ...Обнаружено докритическое поле (H={h:.3f} <= H_crit_eff={denominator:.3f}). Устанавливается конусная фаза.")
-        cos_theta_val = h / denominator if np.abs(denominator) > EPSILON else 1.0
-        cos_theta_val = np.clip(cos_theta_val, -1.0, 1.0)
-        theta0 = np.arccos(cos_theta_val)
-        q_spiral = np.arctan(-d)
+        if h > abs(denominator):
+            # Даже в центре поле может оказаться сверхкритическим, если деформация мала
+            theta_p = 0.0
+        else:
+            cos_theta_val = np.clip(h / denominator, -1.0, 1.0)
+            theta_p = np.arccos(cos_theta_val)
 
-    logging.info(f"   ...Параметры конусной фазы: q={q_spiral:.3f}, theta={np.degrees(theta0):.2f}°")
+        # 4.4. Рассчитываем и записываем компоненты Sx, Sy для данного узла p
+        phi_p = q_spiral * p
+        Sx0[p] = np.sin(theta_p) * np.cos(phi_p)
+        Sy0[p] = np.sin(theta_p) * np.sin(phi_p)
+        logging.info(f"      - Узел p={p}: strain={local_max_strain:.3f}, A_eff={a_eff_local:.3f}, theta={np.degrees(theta_p):.2f}°")
 
-    phi0 = q_spiral * p_indices
-    Sx0 = np.sin(theta0) * np.cos(phi0)
-    Sy0 = np.sin(theta0) * np.sin(phi0)
 
+    logging.info(f"   ...Параметры конусной фазы (для центра): q={q_spiral:.3f}")
+
+    # --- Шаг 5: Собираем финальный вектор начальных условий ---
     Y0 = np.column_stack((Sx0, Sy0)).ravel()
-    Y0 += 1e-5 * np.random.randn(2 * N)
+    Y0 += 1e-5 * np.random.randn(2 * N) # Добавляем малый шум для численной устойчивости
     return Y0
 
 pbar = None
