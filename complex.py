@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 # --- Параметры решетки и симуляции ---
 N_SITES = 101
-T_MAGNETIC_END = 50.0
+T_MAGNETIC_END = 100.0
 FRAME_COUNT = 100
 RESULTS_FOLDER_PREFIX = "breather_run"
 
@@ -34,11 +34,11 @@ ATOMIC_PERIODS = 5
 J_EXCHANGE = 1.0                 # Используется как масштабный множитель
 D_DMI = 0.16                     # Параметр D/2J
 A_ANISOTROPY = 0.15              # Параметр A/2J (анизотропия "легкая плоскость")
-H_EFF = 0.1                      # Параметр H/2J (докритическое поле)
+H_EFF = 0.33                      # Параметр H/2J (докритическое поле)
 
 # --- Параметры связи и масштабирования ---
-B_ME_COUPLING = 0.5              # Константа магнитоэлектрической связи
-ENABLE_ME_COUPLING = False        # Включено для проверки модели со связью
+B_ME_COUPLING = 0.15              # Константа магнитоэлектрической связи
+ENABLE_ME_COUPLING = True        # Включено для проверки модели со связью
 TIME_SCALING_FACTOR = 1.0        # t_atomic = K * t_magnetic
 
 # --- Параметры численного решателя ---
@@ -135,31 +135,53 @@ def get_atomic_pumping_function(N, omega):
 # --- МАГНИТНАЯ ПОДСИСТЕМА (УРАВНЕНИЯ ДВИЖЕНИЯ) ---
 # ==============================================================================
 
-def calculate_initial_state_cartesian(N, d, b, h):
+def calculate_initial_state_cartesian(N, d, a, h, b_me, pump_func):
     """
-    Расчет начального состояния (конической спирали) и возврат в
-    декартовых компонентах Sx, Sy.
+    Расчет начального статического состояния с учетом МАКСИМАЛЬНОЙ
+    деформации от атомного бризера.
     """
-    logging.info("-> Шаг 2: Расчет начального состояния (конусная фаза)...")
-    denominator = 2 * (np.sqrt(1 + d**2) - 1) - 2 * b
-    
+    logging.info("-> Шаг 2: Расчет начального состояния (конусная фаза под влиянием бризера)...")
+
+    # 1. Получаем профиль максимальных амплитуд атомных колебаний
+    # cos(omega*t) = 1, поэтому берем только амплитудную часть
+    p_indices = np.arange(N)
+    q_p_max_amplitudes = pump_func.staggered_factors * pump_func.profile_amplitudes
+
+    # 2. Рассчитываем профиль максимальной деформации (strain)
+    q_p1 = np.roll(q_p_max_amplitudes, -1)
+    q_m1 = np.roll(q_p_max_amplitudes, 1)
+    q_p1[-1], q_m1[0] = 0, 0 # Граничные условия
+    max_strain_profile = q_p1 - q_m1
+
+    # 3. Находим максимальное значение деформации по всей решетке
+    max_strain_value = max_strain_profile[np.argmax(np.abs(max_strain_profile))]
+    logging.info(f"   ...Максимальная статическая деформация от бризера: {max_strain_value:.4f}")
+
+    # 4. Модифицируем анизотропию для расчета начального состояния
+    a_eff_at_max_strain = a + b_me * max_strain_value
+    logging.info(f"   ...Статическая анизотропия A/2J={a:.3f} -> Эффективная A_eff/2J={a_eff_at_max_strain:.3f}")
+
+    # 5. Расчет критического поля с новой эффективной анизотропией
+    # Эта формула соответствует вашим рукописным выкладкам (знаменатель для cos(theta))
+    denominator = 2 * (np.sqrt(1 + d**2) - 1) + 2 * a_eff_at_max_strain
+
     if h > abs(denominator):
-        logging.info("   ...Обнаружено сверхкритическое поле. Устанавливается состояние полной поляризации.")
+        logging.info(f"   ...Обнаружено сверхкритическое поле (H={h:.3f} > H_crit_eff={denominator:.3f}). Устанавливается ФМ состояние.")
         theta0 = 0.0
         q_spiral = 0.0
     else:
+        logging.info(f"   ...Обнаружено докритическое поле (H={h:.3f} <= H_crit_eff={denominator:.3f}). Устанавливается конусная фаза.")
         cos_theta_val = h / denominator if np.abs(denominator) > EPSILON else 1.0
         cos_theta_val = np.clip(cos_theta_val, -1.0, 1.0)
         theta0 = np.arccos(cos_theta_val)
-        q_spiral = np.arctan(d)
+        q_spiral = np.arctan(-d)
 
     logging.info(f"   ...Параметры конусной фазы: q={q_spiral:.3f}, theta={np.degrees(theta0):.2f}°")
 
-    p_indices = np.arange(N)
     phi0 = q_spiral * p_indices
     Sx0 = np.sin(theta0) * np.cos(phi0)
     Sy0 = np.sin(theta0) * np.sin(phi0)
-    
+
     Y0 = np.column_stack((Sx0, Sy0)).ravel()
     Y0 += 1e-5 * np.random.randn(2 * N)
     return Y0
@@ -174,75 +196,70 @@ def magnetic_equations_with_progress(t_mag, Y, *args):
 
 def magnetic_equations_cartesian(t_mag, Y, N, D_norm, A_norm, H_norm, B_me_norm, q_pump_func, K):
     """
-    Система уравнений для Sx, Sy компонент.
-    i * dS+/dτ = RHS => dSx/dτ = Im(RHS), dSy/dτ = -Re(RHS).
+    Система уравнений, где МУ-связь корректно модулирует анизотропию.
     """
     Sx, Sy = Y[0::2], Y[1::2]
     Sz = np.sqrt(np.maximum(0, 1 - Sx**2 - Sy**2))
     S_plus = Sx + 1j * Sy
 
-    # Смещенные по решетке векторы
     S_plus_p1 = np.roll(S_plus, -1); S_plus_m1 = np.roll(S_plus, 1)
     Sz_p1 = np.roll(Sz, -1); Sz_m1 = np.roll(Sz, 1)
     
-    # --- Расчет компонент RHS ---
-    RHS_ex = -(Sz * (S_plus_p1 + S_plus_m1) - S_plus * (Sz_p1 + Sz_m1))
+    # --- КОРРЕКТНАЯ РЕАЛИЗАЦИЯ ВСЕХ ЧЛЕНОВ ---
+    RHS_ex = -0.5 * (Sz * (S_plus_p1 + S_plus_m1) - S_plus * (Sz_p1 + Sz_m1))
     RHS_dmi = -1j * D_norm * Sz * (S_plus_p1 - S_plus_m1)
-    RHS_aniso = 2 * A_norm * Sz * S_plus
     RHS_zeeman = H_norm * S_plus
-    RHS_me = np.zeros_like(S_plus)
 
-    if B_me_norm != 0.0:
-        p_indices = np.arange(N)
-        q_p = q_pump_func(p_indices, K * t_mag)
-        q_p1 = np.roll(q_p, -1); q_m1 = np.roll(q_p, 1)
-        q_p1[-1], q_m1[0] = 0, 0 # Граничные условия для смещений
-        RHS_me = B_me_norm * (q_p1 - q_m1) * Sz * S_plus
-
+    # МУ-связь как модуляция анизотропии
+    p_indices = np.arange(N)
+    q_p = q_pump_func(p_indices, K * t_mag)
+    q_p1 = np.roll(q_p, -1); q_m1 = np.roll(q_p, 1)
+    q_p1[-1], q_m1[0] = 0, 0
+    strain = q_p1 - q_m1
+    effective_anisotropy = A_norm + B_me_norm * strain
+    RHS_aniso = effective_anisotropy * Sz * S_plus
+    
     # --- Граничные условия для открытой цепочки ---
-    # Для p=0: нет соседа слева
-    RHS_ex[0] = -(Sz[0] * S_plus_p1[0] - S_plus[0] * Sz_p1[0])
+    # Для p=0 (нет левого соседа)
+    RHS_ex[0] = -0.5 * (Sz[0] * S_plus_p1[0] - S_plus[0] * Sz_p1[0])
     RHS_dmi[0] = -1j * D_norm * Sz[0] * S_plus_p1[0]
-    if B_me_norm != 0.0: RHS_me[0] = B_me_norm * q_p1[0] * Sz[0] * S_plus[0]
     
-    # Для p=N-1: нет соседа справа
-    RHS_ex[-1] = -(Sz[-1] * S_plus_m1[-1] - S_plus[-1] * Sz_m1[-1])
+    # Для p=N-1 (нет правого соседа)
+    RHS_ex[-1] = -0.5 * (Sz[-1] * S_plus_m1[-1] - S_plus[-1] * Sz_m1[-1])
     RHS_dmi[-1] = -1j * D_norm * Sz[-1] * (-S_plus_m1[-1])
-    if B_me_norm != 0.0: RHS_me[-1] = B_me_norm * (-q_m1[-1]) * Sz[-1] * S_plus[-1]
 
-    RHS = RHS_ex + RHS_dmi + RHS_aniso + RHS_zeeman + RHS_me
+    RHS = RHS_ex + RHS_dmi + RHS_aniso + RHS_zeeman
     
-    # --- Уравнения движения ---
     dSx_dt = np.imag(RHS)
     dSy_dt = -np.real(RHS)
 
     return np.column_stack((dSx_dt, dSy_dt)).ravel()
 
 def calculate_magnetic_energy(Sx, Sy, Sz, t_sol, N, D_norm, A_norm, H_norm, B_me_norm, q_pump_func, K):
-    """Вычисляет полную нормированную энергию магнитной системы E/2J."""
+    """Вычисляет полную нормированную энергию E/2J, СОГЛАСОВАННУЮ с уравнениями."""
     logging.info("   ...Расчет эволюции энергии...")
     energies = []
     p_indices = np.arange(N)
     for i in tqdm(range(len(t_sol)), desc="      ...Энергия"):
-        E_anisotropy = A_norm * np.sum(Sz[:, i]**2)
         E_zeeman = -H_norm * np.sum(Sz[:, i])
 
-        E_me_coupling = 0.0
-        if B_me_norm != 0.0:
-            t_atomic = K * t_sol[i]
-            q_p = q_pump_func(p_indices, t_atomic)
-            q_p1 = np.roll(q_p, -1); q_m1 = np.roll(q_p, 1)
-            q_p1[-1], q_m1[0] = 0, 0
-            E_me_coupling = -B_me_norm * np.sum((q_p1 - q_m1) * Sz[:, i])
+        # Энергия анизотропии и МУ-связи объединены
+        t_atomic = K * t_sol[i]
+        q_p = q_pump_func(p_indices, t_atomic)
+        q_p1 = np.roll(q_p, -1); q_m1 = np.roll(q_p, 1)
+        q_p1[-1], q_m1[0] = 0, 0
+        strain = q_p1 - q_m1
+        effective_anisotropy = A_norm + B_me_norm * strain
+        E_anisotropy_total = np.sum(effective_anisotropy * (Sz[:, i]**2))
 
         Sx_p, Sx_p1 = Sx[:-1, i], Sx[1:, i]
         Sy_p, Sy_p1 = Sy[:-1, i], Sy[1:, i]
         Sz_p, Sz_p1 = Sz[:-1, i], Sz[1:, i]
 
-        E_exchange = -np.sum(Sx_p*Sx_p1 + Sy_p*Sy_p1 + Sz_p*Sz_p1)
+        E_exchange = -0.5 * np.sum(Sx_p*Sx_p1 + Sy_p*Sy_p1 + Sz_p*Sz_p1)
         E_dmi = D_norm * np.sum(Sx_p*Sy_p1 - Sy_p*Sx_p1)
 
-        energies.append(E_anisotropy + E_zeeman + E_me_coupling + E_exchange + E_dmi)
+        energies.append(E_anisotropy_total + E_zeeman + E_exchange + E_dmi)
     return np.array(energies)
 
 # ==============================================================================
@@ -336,7 +353,7 @@ def main():
     logging.info(f"Магнитоупругое взаимодействие: {'ВКЛЮЧЕНО' if ENABLE_ME_COUPLING else 'ВЫКЛЮЧЕНО'}")
 
     atomic_pump = get_atomic_pumping_function(N_SITES, ATOMIC_OMEGA)
-    Y0_magnetic = calculate_initial_state_cartesian(N_SITES, D_DMI, A_ANISOTROPY, H_EFF)
+    Y0_magnetic = calculate_initial_state_cartesian(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump)
     
     logging.info("\n-> Шаг 3: Запуск динамического моделирования магнитной системы...")
     global pbar
@@ -345,7 +362,7 @@ def main():
         sol_magnetic = solve_ivp(
             fun=magnetic_equations_with_progress, t_span=(0, T_MAGNETIC_END), y0=Y0_magnetic,
             method=SOLVER_METHOD, dense_output=True, rtol=SOLVER_RTOL, atol=SOLVER_ATOL,
-            args=(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective / J_NORM, atomic_pump, TIME_SCALING_FACTOR),
+            args=(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump, TIME_SCALING_FACTOR),
         )
     pbar = None
     
@@ -374,7 +391,7 @@ def main():
 
     Sz_eval = np.sqrt(np.maximum(0, 1 - Sx_eval**2 - Sy_eval**2))
 
-    energies = calculate_magnetic_energy(Sx_eval, Sy_eval, Sz_eval, t_eval, N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective / J_NORM, atomic_pump, TIME_SCALING_FACTOR)
+    energies = calculate_magnetic_energy(Sx_eval, Sy_eval, Sz_eval, t_eval, N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump, TIME_SCALING_FACTOR)
     gif_path = results_dir / "combined_dynamics.gif"
     create_combined_visualization_parallel(Sz_eval, Sx_eval, Sy_eval, energies, t_eval, atomic_pump, N_SITES, gif_path, param_string)
 
