@@ -11,8 +11,6 @@ env/
 breather_run_*/
 temp_frames/
 *.log
-*.gif
-*.png
 
 # IDE settings
 .vscode/
