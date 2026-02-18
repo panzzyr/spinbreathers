@@ -21,8 +21,8 @@ from tqdm import tqdm
 
 # --- Параметры решетки и симуляции ---
 N_SITES = 101
-T_MAGNETIC_END = 300.0
-FRAME_COUNT = 1000
+T_MAGNETIC_END = 50.0
+FRAME_COUNT = 150
 RESULTS_FOLDER_PREFIX = "breather_run"
 
 # --- Физические параметры: Атомная подсистема (модель ФПУ) ---
@@ -39,7 +39,7 @@ H_EFF = 0.40                      # Параметр H/2J (поле)
 # --- Параметры связи и масштабирования ---
 B_ME_COUPLING = 0.15              # Константа магнитоэлектрической связи
 ENABLE_ME_COUPLING = True        # Включено для проверки модели со связью
-TIME_SCALING_FACTOR = -15.0        # t_atomic = K * t_magnetic
+TIME_SCALING_FACTOR = 0.05        # t_atomic = K * t_magnetic
 
 # --- Параметры численного решателя ---
 SOLVER_METHOD = 'DOP853'
@@ -53,6 +53,51 @@ EPSILON = 1e-12                  # Малая константа для избе
 # --- ВСПОМОГАТЕЛЬНЫЕ КЛАССЫ И ФУНКЦИИ ---
 # ==============================================================================
 
+def perform_fft_analysis(t_dense, Sx_dense, N, save_path, pump_freq):
+    """
+    Выполняет FFT для ВСЕХ узлов и строит карту распределения частот.
+    """
+    logging.info("-> Анализ Фурье (FFT) по всей цепочке...")
+    
+    # 1. Убираем постоянную составляющую
+    means = np.mean(Sx_dense, axis=1, keepdims=True)
+    signal_centered = Sx_dense - means
+    
+    # 2. Окно Ханнинга
+    window = np.hanning(signal_centered.shape[1])
+    signal_windowed = signal_centered * window
+    
+    # 3. FFT
+    dt = t_dense[1] - t_dense[0]
+    fft_vals = np.abs(np.fft.rfft(signal_windowed, axis=1))
+    freqs = np.fft.rfftfreq(signal_windowed.shape[1], dt)
+    
+    # --- ВИЗУАЛИЗАЦИЯ ---
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # График 1: Среднее
+    avg_spectrum = np.mean(fft_vals, axis=0)
+    ax1.plot(freqs, avg_spectrum, color='purple', lw=1.5)
+    ax1.set_title('Усредненный спектр (Average Spectrum)')
+    ax1.set_ylabel('Амплитуда'); ax1.set_xlabel('Частота (ω)')
+    ax1.set_xlim(0, 5.0)
+    ax1.axvline(x=pump_freq, color='r', linestyle='--', label=f'Накачка (Ω={pump_freq:.2f})')
+    ax1.legend(); ax1.grid(True, alpha=0.5)
+
+    # График 2: Тепловая карта
+    freq_mask = freqs <= 5.0
+    im = ax2.imshow(fft_vals[:, freq_mask], aspect='auto', origin='lower', cmap='inferno',
+                    extent=[freqs[freq_mask][0], freqs[freq_mask][-1], 0, N])
+    ax2.set_title('Пространственное распределение частот')
+    ax2.set_ylabel('Узел (N)'); ax2.set_xlabel('Частота (ω)')
+    ax2.axvline(x=pump_freq, color='cyan', linestyle='--', linewidth=1.5)
+    plt.colorbar(im, ax=ax2, label='Амплитуда')
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    logging.info(f"   ...Карта спектра сохранена: {save_path}")
+    
 class AtomicPumpingFunction:
     """
     Класс-обертка для векторизованной функции атомной накачки.
@@ -63,10 +108,11 @@ class AtomicPumpingFunction:
         self.profile_amplitudes = profile_amplitudes
         self.staggered_factors = staggered_factors
         self.omega = omega
-
+    
     def __call__(self, p_indices, t_atomic):
         """Делает экземпляр класса вызываемым, как обычную функцию."""
         return self.staggered_factors * self.profile_amplitudes * np.cos(self.omega * t_atomic)
+
 
 def setup_logging(log_path):
     """Настраивает систему логирования для вывода в консоль и файл."""
@@ -304,9 +350,9 @@ def render_frame(frame_idx, t_vals, Sz_data, Sx_data, Sy_data, energies, pump_fu
     plt.close(fig)
     return str(filepath)
 
-def create_combined_visualization_parallel(Sz_data, Sx_data, Sy_data, energies, t_vals, pump_func, N, filename, param_text):
-    """Создает GIF-анимацию, распараллеливая генерацию кадров."""
-    logging.info("-> Шаг 4.1: Создание комбинированной GIF анимации (параллельно)...")
+def create_combined_visualization_parallel(Sz_data, Sx_data, Sy_data, energies, t_vals, pump_func, N, filename, param_text, temp_dir_keep_step=10):
+    """Создает GIF и чистит кадры, оставляя каждый N-й."""
+    logging.info("-> Шаг 4.1: Создание комбинированной GIF анимации...")
     temp_dir = Path("temp_frames"); temp_dir.mkdir(exist_ok=True)
     
     min_e, max_e = np.min(energies), np.max(energies)
@@ -323,17 +369,26 @@ def create_combined_visualization_parallel(Sz_data, Sx_data, Sy_data, energies, 
                         param_text=param_text, temp_dir=temp_dir)
 
     num_workers = max(1, multiprocessing.cpu_count() - 1)
-    logging.info(f"   ...Используется {num_workers} ядер для генерации {FRAME_COUNT} кадров.")
     
     with multiprocessing.Pool(processes=num_workers) as pool:
-        filenames = list(tqdm(pool.imap(task_func, range(FRAME_COUNT)), total=FRAME_COUNT, desc="   ...Генерация кадров"))
+        filenames = list(tqdm(pool.imap(task_func, range(len(t_vals))), total=len(t_vals), desc="   ...Генерация кадров"))
 
     filenames.sort()
+    
+    # Сборка GIF
     with imageio.get_writer(filename, mode='I', duration=1000/20, loop=0) as writer:
         for f in tqdm(filenames, desc="   ...Сборка GIF"):
             writer.append_data(imageio.v2.imread(f))
-    logging.info(f"   ...Комбинированный GIF файл сохранен: {filename}")
-
+            
+    # Умная очистка
+    logging.info(f"   ...Очистка временных файлов (сохранение каждого {temp_dir_keep_step}-го)...")
+    for i, f in enumerate(filenames):
+        if i % temp_dir_keep_step != 0:
+            try:
+                os.remove(f)
+            except OSError: pass
+    
+    logging.info(f"   ...GIF сохранен: {filename}")
 # ==============================================================================
 # --- ОСНОВНОЙ ИСПОЛНЯЕМЫЙ БЛОК ---
 # ==============================================================================
@@ -344,20 +399,20 @@ def main():
     results_dir.mkdir(exist_ok=True)
     setup_logging(results_dir / "simulation.log")
 
-    logging.info("="*60 + "\n--- ЗАПУСК МОДЕЛИРОВАНИЯ (декартовы координаты) ---\n" + "="*60)
-    param_string = (f"ПАРАМЕТРЫ:\n" f"N={N_SITES}, T_END={T_MAGNETIC_END}, Ω={ATOMIC_OMEGA}, B_me={B_ME_COUPLING:.2f}\n"
-                    f"D/2J={D_DMI:.2f}, A/2J={A_ANISOTROPY:.2f}, H/2J={H_EFF:.2f}\n"
-                    f"РЕШАТЕЛЬ: {SOLVER_METHOD}, Rtol={SOLVER_RTOL}, Atol={SOLVER_ATOL}")
+    logging.info("="*60 + "\n--- ЗАПУСК МОДЕЛИРОВАНИЯ ---\n" + "="*60)
+    # ИСПРАВЛЕНИЕ 1: Заменили спецсимвол Ω на Omega во избежание ошибки кодировки Windows
+    param_string = (f"ПАРАМЕТРЫ:\n" f"N={N_SITES}, T_END={T_MAGNETIC_END}, Omega={ATOMIC_OMEGA}, K={TIME_SCALING_FACTOR}\n"
+                    f"D/2J={D_DMI:.2f}, A/2J={A_ANISOTROPY:.2f}, H/2J={H_EFF:.2f}, B_me={B_ME_COUPLING:.2f}\n"
+                    f"РЕШАТЕЛЬ: {SOLVER_METHOD}, Rtol={SOLVER_RTOL}")
     logging.info("\n--- Стартовая конфигурация ---\n" + param_string + "\n" + "-"*28 + "\n")
 
     J_NORM = 2.0 * J_EXCHANGE 
     b_me_effective = B_ME_COUPLING if ENABLE_ME_COUPLING else 0.0
-    logging.info(f"Магнитоупругое взаимодействие: {'ВКЛЮЧЕНО' if ENABLE_ME_COUPLING else 'ВЫКЛЮЧЕНО'}")
 
     atomic_pump = get_atomic_pumping_function(N_SITES, ATOMIC_OMEGA)
     Y0_magnetic = calculate_initial_state_cartesian(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump)
     
-    logging.info("\n-> Шаг 3: Запуск динамического моделирования магнитной системы...")
+    logging.info("\n-> Шаг 3: Запуск динамического моделирования...")
     global pbar
     with tqdm(total=T_MAGNETIC_END, desc="   ...Интегрирование") as pbar_instance:
         pbar = pbar_instance
@@ -368,36 +423,40 @@ def main():
         )
     pbar = None
     
-    logging.info(f"   ...Динамическое моделирование завершено. Статус: {sol_magnetic.message}")
     if not sol_magnetic.success:
-        logging.error("!!! Решатель не справился с задачей. Моделирование прервано. !!!")
+        logging.error("!!! Решатель упал !!!")
         return
 
-    logging.info("\n-> Шаг 4: Постобработка и визуализация результатов...")
-    t_eval = np.linspace(0, T_MAGNETIC_END, FRAME_COUNT)
-    Y_eval = sol_magnetic.sol(t_eval)
+    logging.info("\n-> Шаг 4: Постобработка и визуализация...")
     
-    Sx_eval = Y_eval[0::2, :]
-    Sy_eval = Y_eval[1::2, :]
+    # --- ЭТАП А: Данные для Фурье (Плотная сетка) ---
+    N_FFT = 2000 # Высокое разрешение для спектра
+    t_dense = np.linspace(0, T_MAGNETIC_END, N_FFT)
+    Y_dense = sol_magnetic.sol(t_dense)
+    Sx_dense = Y_dense[0::2, :]
+    
+    # Расчет эффективной частоты накачки (с учетом Time Scaling)
+    # Если t_atomic = K * t_mag, то частота в магнитной системе = Omega * |K|
+    effective_pump_freq = ATOMIC_OMEGA * abs(TIME_SCALING_FACTOR)
+    
+    perform_fft_analysis(t_dense, Sx_dense, N_SITES, results_dir / "spectrum_heatmap.png", effective_pump_freq)
 
-    # --- Принудительная перенормировка для численной стабильности ---
-    logging.info("   ...Выполнение принудительной перенормировки векторов спинов...")
-    norm_sq = Sx_eval**2 + Sy_eval**2
-    mask = norm_sq > 1.0
-    # Добавляем EPSILON чтобы избежать деления на ноль, если norm_sq[mask] будет содержать нули (маловероятно)
-    norm = np.sqrt(norm_sq[mask] + EPSILON) 
-    Sx_eval[mask] /= norm
-    Sy_eval[mask] /= norm
-    logging.info(f"      ...Перенормировано {np.sum(mask)} точек, где S_x^2 + S_y^2 > 1.")
-    # --- Конец блока перенормировки ---
+    # --- ЭТАП Б: Данные для GIF (Редкая сетка) ---
+    t_gif = np.linspace(0, T_MAGNETIC_END, FRAME_COUNT)
+    Y_gif = sol_magnetic.sol(t_gif)
+    Sx_gif, Sy_gif = Y_gif[0::2, :], Y_gif[1::2, :]
+    
+    # Перенормировка для GIF
+    norm = np.sqrt(np.maximum(Sx_gif**2 + Sy_gif**2, EPSILON))
+    Sx_gif[norm > 1.0] /= norm[norm > 1.0]
+    Sy_gif[norm > 1.0] /= norm[norm > 1.0]
+    Sz_gif = np.sqrt(np.maximum(0, 1 - Sx_gif**2 - Sy_gif**2))
 
-    Sz_eval = np.sqrt(np.maximum(0, 1 - Sx_eval**2 - Sy_eval**2))
+    energies = calculate_magnetic_energy(Sx_gif, Sy_gif, Sz_gif, t_gif, N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump, TIME_SCALING_FACTOR)
+    
+    create_combined_visualization_parallel(Sz_gif, Sx_gif, Sy_gif, energies, t_gif, atomic_pump, N_SITES, results_dir / "dynamics.gif", param_string)
 
-    energies = calculate_magnetic_energy(Sx_eval, Sy_eval, Sz_eval, t_eval, N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump, TIME_SCALING_FACTOR)
-    gif_path = results_dir / "combined_dynamics.gif"
-    create_combined_visualization_parallel(Sz_eval, Sx_eval, Sy_eval, energies, t_eval, atomic_pump, N_SITES, gif_path, param_string)
-
-    logging.info("\n" + "="*60 + "\n--- МОДЕЛИРОВАНИЕ УСПЕШНО ЗАВЕРШЕНО ---\n" + f"Результаты сохранены в папке: {results_dir}\n" + "="*60)
+    logging.info("\n" + "="*60 + f"\nГОТОВО! Результаты в: {results_dir}\n" + "="*60)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
