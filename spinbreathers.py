@@ -21,9 +21,9 @@ from tqdm import tqdm
 
 # --- Параметры решетки и симуляции ---
 N_SITES = 101
-T_MAGNETIC_END = 50.0
-FRAME_COUNT = 150
-RESULTS_FOLDER_PREFIX = "breather_run"
+T_MAGNETIC_END = 500.0
+FRAME_COUNT = 5000
+RESULTS_FOLDER_PREFIX = "new fft, 0.15 kick, 0.15 B_me, 0.02 K, D=0.16, A=0.15, H=0.40, "
 
 # --- Физические параметры: Атомная подсистема (модель ФПУ) ---
 ATOMIC_OMEGA = 2.1
@@ -39,7 +39,7 @@ H_EFF = 0.40                      # Параметр H/2J (поле)
 # --- Параметры связи и масштабирования ---
 B_ME_COUPLING = 0.15              # Константа магнитоэлектрической связи
 ENABLE_ME_COUPLING = True        # Включено для проверки модели со связью
-TIME_SCALING_FACTOR = 0.05        # t_atomic = K * t_magnetic
+TIME_SCALING_FACTOR = 0.02        # t_atomic = K * t_magnetic
 
 # --- Параметры численного решателя ---
 SOLVER_METHOD = 'DOP853'
@@ -53,50 +53,70 @@ EPSILON = 1e-12                  # Малая константа для избе
 # --- ВСПОМОГАТЕЛЬНЫЕ КЛАССЫ И ФУНКЦИИ ---
 # ==============================================================================
 
-def perform_fft_analysis(t_dense, Sx_dense, N, save_path, pump_freq):
+def perform_fft_analysis_stages(t_dense, Sx_dense, N, save_path, pump_freq, num_stages=5):
     """
-    Выполняет FFT для ВСЕХ узлов и строит карту распределения частот.
+    Разбивает историю эволюции на num_stages этапов.
+    Строит 1D-спектр центрального узла и 2D-спектр всей цепочки.
     """
-    logging.info("-> Анализ Фурье (FFT) по всей цепочке...")
-    
-    # 1. Убираем постоянную составляющую
-    means = np.mean(Sx_dense, axis=1, keepdims=True)
-    signal_centered = Sx_dense - means
-    
-    # 2. Окно Ханнинга
-    window = np.hanning(signal_centered.shape[1])
-    signal_windowed = signal_centered * window
-    
-    # 3. FFT
-    dt = t_dense[1] - t_dense[0]
-    fft_vals = np.abs(np.fft.rfft(signal_windowed, axis=1))
-    freqs = np.fft.rfftfreq(signal_windowed.shape[1], dt)
-    
-    # --- ВИЗУАЛИЗАЦИЯ ---
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-    
-    # График 1: Среднее
-    avg_spectrum = np.mean(fft_vals, axis=0)
-    ax1.plot(freqs, avg_spectrum, color='purple', lw=1.5)
-    ax1.set_title('Усредненный спектр (Average Spectrum)')
-    ax1.set_ylabel('Амплитуда'); ax1.set_xlabel('Частота (ω)')
-    ax1.set_xlim(0, 5.0)
-    ax1.axvline(x=pump_freq, color='r', linestyle='--', label=f'Накачка (Ω={pump_freq:.2f})')
-    ax1.legend(); ax1.grid(True, alpha=0.5)
+    import logging
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import os
 
-    # График 2: Тепловая карта
-    freq_mask = freqs <= 5.0
-    im = ax2.imshow(fft_vals[:, freq_mask], aspect='auto', origin='lower', cmap='inferno',
-                    extent=[freqs[freq_mask][0], freqs[freq_mask][-1], 0, N])
-    ax2.set_title('Пространственное распределение частот')
-    ax2.set_ylabel('Узел (N)'); ax2.set_xlabel('Частота (ω)')
-    ax2.axvline(x=pump_freq, color='cyan', linestyle='--', linewidth=1.5)
-    plt.colorbar(im, ax=ax2, label='Амплитуда')
+    logging.info(f"-> Анализ Фурье: генерация {num_stages} комбинированных слепков...")
     
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
-    logging.info(f"   ...Карта спектра сохранена: {save_path}")
+    chunk_size = len(t_dense) // num_stages
+    center_idx = N // 2
+    
+    base_dir = os.path.dirname(save_path)
+    base_name = os.path.basename(save_path).replace('.png', '')
+
+    for stage in range(num_stages):
+        start_idx = stage * chunk_size
+        end_idx = (stage + 1) * chunk_size if stage < num_stages - 1 else len(t_dense)
+        
+        t_chunk = t_dense[start_idx:end_idx]
+        Sx_chunk = Sx_dense[:, start_idx:end_idx]
+        dt = t_chunk[1] - t_chunk[0]
+        
+        # --- Чистое Фурье (без окон и вычитания среднего) ---
+        fft_vals = np.abs(np.fft.rfft(Sx_chunk, axis=1))
+        freqs = np.fft.rfftfreq(Sx_chunk.shape[1], dt)
+        
+        # Данные для центрального узла
+        fft_center = fft_vals[center_idx, :]
+        
+        # --- ВИЗУАЛИЗАЦИЯ ---
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+        t_start_val, t_end_val = t_chunk[0], t_chunk[-1]
+        fig.suptitle(f'Этап {stage + 1}/{num_stages} | t $\in$ [{t_start_val:.1f}, {t_end_val:.1f}]', fontsize=14)
+
+        # 1. График центрального элемента (1D)
+        ax1.plot(freqs, fft_center, color='forestgreen', lw=1.5)
+        ax1.axvline(x=pump_freq, color='r', linestyle='--', label=f'Накачка (Ω={pump_freq:.2f})')
+        ax1.set_title(f'Спектр центрального узла (N={center_idx})')
+        ax1.set_ylabel('Амплитуда')
+        ax1.set_xlim(0, 5.0)
+        ax1.legend()
+        ax1.grid(True, alpha=0.5)
+
+        # 2. Тепловая карта всех элементов (2D)
+        freq_mask = freqs <= 5.0
+        im = ax2.imshow(fft_vals[:, freq_mask], aspect='auto', origin='lower', cmap='inferno',
+                        extent=[freqs[freq_mask][0], freqs[freq_mask][-1], 0, N])
+        ax2.set_title('Пространственный спектр всей цепочки')
+        ax2.set_ylabel('Узел (N)')
+        ax2.set_xlabel('Частота (ω)')
+        ax2.axvline(x=pump_freq, color='cyan', linestyle='--', linewidth=1.5)
+        plt.colorbar(im, ax=ax2, label='Амплитуда')
+
+        plt.tight_layout()
+        
+        stage_save_path = os.path.join(base_dir, f"{base_name}_stage_{stage+1}.png")
+        plt.savefig(stage_save_path)
+        plt.close()
+        
+    logging.info(f"   ...Комбинированные спектры сохранены в {base_dir}")
     
 class AtomicPumpingFunction:
     """
@@ -181,64 +201,41 @@ def get_atomic_pumping_function(N, omega):
 # --- МАГНИТНАЯ ПОДСИСТЕМА (УРАВНЕНИЯ ДВИЖЕНИЯ) ---
 # ==============================================================================
 
-def calculate_initial_state_cartesian(N, d, a, h, b_me, pump_func):
+def calculate_initial_state_cartesian_decoupled(N, d, a, h, initial_strain_kick=0.15):
     """
-    Расчет гибридного начального состояния:
-    - Центральные 5 узлов: конусная фаза, рассчитанная из ЛОКАЛЬНОЙ деформации.
-    - Остальные узлы: принудительное ферромагнитное состояние.
+    Генерация гибридного начального состояния с жестко заданной 
+    амплитудой начального возмущения (initial_strain_kick), 
+    которая не зависит от глобального B_ME_COUPLING.
     """
-    logging.info("-> Шаг 2: Расчет гибридного начального состояния (локализованный бризер)...")
+    import logging
+    logging.info(f"-> Инициализация с фиксированным возмущением анизотропии: {initial_strain_kick}")
 
-    # --- Шаг 1: Инициализируем всю цепочку в ФМ состоянии (theta=0) ---
     Sx0 = np.zeros(N)
     Sy0 = np.zeros(N)
-    logging.info("   ...Вся цепочка инициализирована в ФМ состоянии (Sx=0, Sy=0).")
 
-    # --- Шаг 2: Определяем центральные 5 узлов для модификации ---
     center_idx = N // 2
-    # Создаем срез для 5 центральных элементов
     central_indices = np.arange(center_idx - 2, center_idx + 3)
-    logging.info(f"   ...Будут модифицированы центральные узлы с индексами: {central_indices}.")
-
-    # --- Шаг 3: Рассчитываем профиль максимальных амплитуд для вычисления деформации ---
-    p_indices_all = np.arange(N)
-    q_p_max_amplitudes = pump_func.staggered_factors * pump_func.profile_amplitudes
-    q_p1_max = np.roll(q_p_max_amplitudes, -1)
-    q_m1_max = np.roll(q_p_max_amplitudes, 1)
-    q_p1_max[-1], q_m1_max[0] = 0, 0 # Граничные условия
-
-    # --- Шаг 4: Цикл только по центральным узлам для расчета их локального угла theta_p ---
-    q_spiral = np.arctan(-d) # Спиральный вектор q постоянен для всей системы
+    
+    q_spiral = np.arctan(-d) 
 
     for p in central_indices:
-        # 4.1. Вычисляем локальную максимальную деформацию для узла p
-        local_max_strain = q_p1_max[p] - q_m1_max[p]
-
-        # 4.2. Вычисляем локальную эффективную анизотропию (взял модуль деформации)
-        a_eff_local = a + b_me * np.abs(local_max_strain)
-
-        # 4.3. Расчет локального критического поля и угла theta_p
+        # Эффективная анизотропия задается ручным "пинком", а не через B_me * strain
+        a_eff_local = a + initial_strain_kick
+        
         denominator = 2 * (np.sqrt(1 + d**2) - 1) + 2 * a_eff_local
 
         if h > abs(denominator):
-            # Даже в центре поле может оказаться сверхкритическим, если деформация мала
             theta_p = 0.0
         else:
             cos_theta_val = np.clip(h / denominator, -1.0, 1.0)
             theta_p = np.arccos(cos_theta_val)
 
-        # 4.4. Рассчитываем и записываем компоненты Sx, Sy для данного узла p
         phi_p = q_spiral * p
         Sx0[p] = np.sin(theta_p) * np.cos(phi_p)
         Sy0[p] = np.sin(theta_p) * np.sin(phi_p)
-        logging.info(f"      - Узел p={p}: strain={local_max_strain:.3f}, A_eff={a_eff_local:.3f}, theta={np.degrees(theta_p):.2f}°")
 
-
-    logging.info(f"   ...Параметры конусной фазы (для центра): q={q_spiral:.3f}")
-
-    # --- Шаг 5: Собираем финальный вектор начальных условий ---
     Y0 = np.column_stack((Sx0, Sy0)).ravel()
-    Y0 += 1e-5 * np.random.randn(2 * N) # Добавляем малый шум для численной устойчивости
+    Y0 += 1e-5 * np.random.randn(2 * N)
     return Y0
 
 pbar = None
@@ -322,28 +319,71 @@ def calculate_magnetic_energy(Sx, Sy, Sz, t_sol, N, D_norm, A_norm, H_norm, B_me
 # ==============================================================================
 
 def render_frame(frame_idx, t_vals, Sz_data, Sx_data, Sy_data, energies, pump_func, N, q_ylim, energy_ylim, param_text, temp_dir):
-    """Отрисовывает один кадр для последующей сборки в GIF."""
+    """Отрисовывает кадр с расширенной сеткой 2x3 (добавлен Sy)."""
     t_current = t_vals[frame_idx]
     lattice_points = np.arange(N)
     
-    fig, axs = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle(f'Полная динамика системы | Время = {t_current:.2f}', fontsize=16)
+    # Делаем фигуру шире (18x10), сетка 2 строки х 3 колонки
+    fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle(f'Dynamics | t = {t_current:.2f}', fontsize=16)
 
+    # --- ВЕРХНИЙ РЯД: Компоненты спина ---
+    
+    # 1. Sx
     ax1 = axs[0, 0]
-    ax1.plot(lattice_points, Sx_data[:, frame_idx], 'o-', color='royalblue'); ax1.set_title('2. Эволюция S_x компоненты'); ax1.set_xlabel('Узел (p)'); ax1.set_ylabel('S_x'); ax1.set_ylim(-1.05, 1.05); ax1.grid(True, linestyle='--', alpha=0.6)
+    ax1.plot(lattice_points, Sx_data[:, frame_idx], 'o-', color='royalblue', markersize=4)
+    ax1.set_title(r'$S_x$ component')
+    ax1.set_ylim(-1.05, 1.05); ax1.grid(True, alpha=0.4)
 
+    # 2. Sy (НОВОЕ)
     ax2 = axs[0, 1]
-    ax2.plot(lattice_points, Sz_data[:, frame_idx], 'o-', color='royalblue'); ax2.set_title('2. Эволюция S_z компоненты'); ax2.set_xlabel('Узел (p)'); ax2.set_ylabel('S_z'); ax2.set_ylim(-1.05, 1.05); ax2.grid(True, linestyle='--', alpha=0.6)
+    ax2.plot(lattice_points, Sy_data[:, frame_idx], 'o-', color='darkorange', markersize=4)
+    ax2.set_title(r'$S_y$ component')
+    ax2.set_ylim(-1.05, 1.05); ax2.grid(True, alpha=0.4)
+    # Убираем метки Y, чтобы не загромождать (общая шкала)
+    ax2.set_yticklabels([])
 
-    ax3 = fig.add_subplot(2, 2, 3, projection='3d'); ax3.set_title('3. 3D представление спинов')
-    ax3.quiver(lattice_points, 0, 0, Sz_data[:, frame_idx], Sx_data[:, frame_idx], Sy_data[:, frame_idx], length=0.8, normalize=True)
-    ax3.set_xlim(0, N); ax3.set_ylim(-1, 1); ax3.set_zlim(-1, 1); ax3.set_xlabel('Узел (p)'); ax3.set_ylabel('S_x'); ax3.set_zlabel('S_y'); ax3.view_init(elev=30, azim=-120)
+    # 3. Sz
+    ax3 = axs[0, 2]
+    ax3.plot(lattice_points, Sz_data[:, frame_idx], 'o-', color='forestgreen', markersize=4)
+    ax3.set_title(r'$S_z$ component')
+    ax3.set_ylim(-1.05, 1.05); ax3.grid(True, alpha=0.4)
+    ax3.set_yticklabels([])
 
-    ax4 = axs[1, 1]
-    ax4.plot(t_vals[:frame_idx+1], energies[:frame_idx+1], color='crimson'); ax4.set_title('4. Эволюция полной энергии'); ax4.set_xlabel('Время (t)'); ax4.set_ylabel('Энергия (E/2J)'); ax4.set_xlim(0, t_vals[-1]); ax4.set_ylim(energy_ylim); ax4.grid(True, linestyle='--', alpha=0.6)
+    # --- НИЖНИЙ РЯД: Физика и 3D ---
 
-    plt.figtext(0.02, 0.02, param_text, ha="left", va="bottom", fontsize=10, bbox={"facecolor":"white", "alpha":0.8, "pad":5})
-    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    # 4. Атомная накачка (q) - вернул, чтобы видеть причину движения
+    ax4 = axs[1, 0]
+    q_values = pump_func(lattice_points, t_current) 
+    ax4.plot(lattice_points, q_values, '.-', color='gray', alpha=0.7)
+    ax4.set_title(r'Atomic lattice ($q_n$)')
+    ax4.set_ylim(-q_ylim, q_ylim); ax4.grid(True, alpha=0.4)
+    ax4.set_xlabel('Site (n)')
+
+    # 5. Энергия
+    ax5 = axs[1, 1]
+    ax5.plot(t_vals[:frame_idx+1], energies[:frame_idx+1], color='crimson', lw=1.5)
+    ax5.set_title('Total Energy')
+    ax5.set_xlabel('Time'); ax5.set_xlim(0, t_vals[-1])
+    ax5.set_ylim(energy_ylim); ax5.grid(True, alpha=0.4)
+
+    # 6. 3D Вид
+    # Удаляем обычный subplot и добавляем 3d projection на его место
+    fig.delaxes(axs[1, 2])
+    ax6 = fig.add_subplot(2, 3, 6, projection='3d')
+    ax6.quiver(lattice_points, 0, 0, 
+               Sz_data[:, frame_idx], Sx_data[:, frame_idx], Sy_data[:, frame_idx], 
+               length=0.8, normalize=True, color='black', alpha=0.8)
+    ax6.set_title('3D Spin View')
+    ax6.set_ylim(-1, 1); ax6.set_zlim(-1, 1)
+    ax6.set_xlabel('n'); ax6.set_ylabel('Sx'); ax6.set_zlabel('Sy')
+    ax6.view_init(elev=20, azim=-60)
+
+    # Текст с параметрами
+    plt.figtext(0.01, 0.01, param_text, ha="left", va="bottom", fontsize=9, 
+                bbox={"facecolor":"white", "alpha":0.9, "pad":3})
+    
+    plt.tight_layout()
     
     filepath = temp_dir / f"frame_{frame_idx:04d}.png"
     plt.savefig(filepath)
@@ -410,7 +450,7 @@ def main():
     b_me_effective = B_ME_COUPLING if ENABLE_ME_COUPLING else 0.0
 
     atomic_pump = get_atomic_pumping_function(N_SITES, ATOMIC_OMEGA)
-    Y0_magnetic = calculate_initial_state_cartesian(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, b_me_effective, atomic_pump)
+    Y0_magnetic = calculate_initial_state_cartesian_decoupled(N_SITES, D_DMI, A_ANISOTROPY, H_EFF, initial_strain_kick=0.0)
     
     logging.info("\n-> Шаг 3: Запуск динамического моделирования...")
     global pbar
@@ -439,7 +479,7 @@ def main():
     # Если t_atomic = K * t_mag, то частота в магнитной системе = Omega * |K|
     effective_pump_freq = ATOMIC_OMEGA * abs(TIME_SCALING_FACTOR)
     
-    perform_fft_analysis(t_dense, Sx_dense, N_SITES, results_dir / "spectrum_heatmap.png", effective_pump_freq)
+    perform_fft_analysis_stages(t_dense, Sx_dense, N_SITES, results_dir / "spectrum_heatmap.png", effective_pump_freq)
 
     # --- ЭТАП Б: Данные для GIF (Редкая сетка) ---
     t_gif = np.linspace(0, T_MAGNETIC_END, FRAME_COUNT)

@@ -18,3 +18,5 @@ temp_frames/
 
 # Exception: Keep assets for README
 !assets/
+
+!old_results/
