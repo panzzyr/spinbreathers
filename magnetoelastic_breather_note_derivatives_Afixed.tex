@@ -1,0 +1,320 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T2A]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage[russian]{babel}
+\else
+  \usepackage{fontspec}
+  \usepackage{polyglossia}
+  \setmainlanguage{russian}
+  \setmainfont{DejaVu Serif}
+  \setsansfont{DejaVu Sans}
+  \setmonofont{DejaVu Sans Mono}
+\fi
+\usepackage{amsmath,amssymb,amsthm,bm,mathtools}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{physics}
+\usepackage{xcolor}
+\geometry{margin=2.2cm}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\setlist[itemize]{leftmargin=1.5em}
+\setlist[enumerate]{leftmargin=1.7em}
+\setlength{\parindent}{1.25em}
+\setlength{\parskip}{0.35em}
+
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\Hatom}{\mathcal{H}_{\mathrm{at}}}
+\newcommand{\Hsp}{\mathcal{H}_{\mathrm{sp}}}
+\newcommand{\m}{\bm{m}}
+\newcommand{\ez}{\bm{e}_z}
+\newcommand{\ta}{\tau_{\mathrm{a}}}
+\newcommand{\tm}{\tau_{\mathrm{m}}}
+\newcommand{\R}{\bm{R}}
+\newcommand{\uvec}{\bm{u}}
+\newcommand{\rvec}{\bm{r}}
+\newcommand{\ezz}{u_{zz}}
+
+\begin{document}
+
+\begin{center}
+{\LARGE Магнитный бризер, запускаемый атомным бризером:\\[0.2em]
+редуцированная магнитоупругая постановка в физических переменных}\\[0.8em]
+{\large Рабочая заметка на основе исходной математической схемы и статьи по магнитоупругому учету деформации}\\[0.6em]
+\end{center}
+
+\section*{Аннотация}
+Ниже переписана исходная постановка задачи так, чтобы магнитоупругая связь была введена в более физической форме: не через абстрактную модуляцию коэффициентов ``от смещений'', а через изменение межузельных расстояний и соответствующие производные обменных и DM-констант по деформации. Для одноионной анизотропии используется не разложение $A(\eta)$, а стандартный линейный магнитоупругий вклад с постоянной константой связи $B_A$, так что временная зависимость возникает только через локальную координату деформации. По сути задача остается той же: сначала независимо рассчитывается атомный бризер в одномерной решетке, затем его поле смещений используется как внешний локализованный драйв для спиновой подсистемы. Изменяется именно язык записи. Вместо чисто математических разностей $q_{n+1}-q_n$ вводятся равновесные положения узлов $R_n$, текущие положения $r_n$, деформированные длины связей $\ell_n$ и относительная деформация $\eta_n=(\ell_n-a)/a$, а магнитоупругая часть строится по тому же принципу, что и в работе о распространении ультразвука и exchange-strain механизме \cite{Tereshchenko2022}. Это позволяет прямо видеть, какие именно производные $\dv*{J}{\ell}$ и $\dv*{D}{\ell}$ входят в модель, а анизотропный канал выделяется через отдельную магнитоупругую константу $B_A$.
+
+\section{Идея редукции и физические переменные}
+Рассматривается одномерная атомная цепочка с равновесными положениями
+\begin{equation}
+R_n = na, \qquad n\in\mathbb{Z},
+\end{equation}
+где $a$ --- шаг решетки вдоль оси цепочки $z$. Текущее положение $n$-го узла записываем как
+\begin{equation}
+r_n(t)=R_n+u_n(t),
+\end{equation}
+где $u_n(t)$ --- продольное смещение узла.
+
+После вычисления атомного бризера $u_n^{(b)}(t)$ мы не решаем полную самосогласованную магнитоупругую задачу, а используем этот профиль как заданное поле деформации, которое модулирует параметры спинового гамильтониана. Таким образом:
+\begin{align}
+&\text{(I) атомная задача:} && u_n^{(b)}(t) \ \text{--- периодический локализованный бризер}, \\
+&\text{(II) магнитная задача:} && \m_n(t) \ \text{--- спиновая динамика в неавтономных } J_n(t),D_n(t),A_n(t).
+\end{align}
+
+Ключевой принцип тот же, что и в исходной заметке, но теперь драйв формируется через \emph{изменение расстояния между узлами}, а не через формально введенную модуляцию коэффициентов.
+
+\section{Атомная подсистема и деформированная геометрия}
+В одномерной FPU-$\beta$ цепочке удобно писать гамильтониан через смещения $u_n$:
+\begin{equation}
+\Hatom = \sum_n \frac{M\dot u_n^2}{2} + \sum_n V\bigl(r_{n+1}-r_n\bigr),
+\qquad
+V(\Delta r)=\frac{K}{2}(\Delta r-a)^2+\frac{\beta}{4}(\Delta r-a)^4.
+\label{eq:Hatom_physical}
+\end{equation}
+Так как
+\begin{equation}
+r_{n+1}-r_n = a + u_{n+1}-u_n,
+\end{equation}
+то в безразмерной записи это эквивалентно использованной ранее модели через разности $q_{n+1}-q_n$.
+
+Физически важная величина --- это не само смещение узла, а деформированная длина связи
+\begin{equation}
+\ell_n(t)=r_{n+1}(t)-r_n(t)=a+u_{n+1}(t)-u_n(t)
+\label{eq:ell_n}
+\end{equation}
+и относительная деформация связи
+\begin{equation}
+\eta_n(t)=\frac{\ell_n(t)-a}{a}=\frac{u_{n+1}(t)-u_n(t)}{a}.
+\label{eq:eta_n_discrete}
+\end{equation}
+В длинноволновом или квазиконтинуальном языке это просто одномерная компонента тензора деформации,
+\begin{equation}
+\eta_n(t)\approx \eval{\pdv{u(z,t)}{z}}_{z=R_n+a/2},
+\qquad
+\ezz(z,t)=\pdv{u(z,t)}{z},
+\label{eq:strain_continuum}
+\end{equation}
+что полностью аналогично записи через производные смещений, используемой в \cite{Tereshchenko2022}.
+
+Для site-параметров естественно использовать деформацию в узле,
+\begin{equation}
+\bar\eta_n(t)=\frac{\eta_n(t)+\eta_{n-1}(t)}{2}
+=\frac{u_{n+1}(t)-u_{n-1}(t)}{2a}
+\approx \eval{\pdv{u(z,t)}{z}}_{z=R_n}.
+\label{eq:eta_site}
+\end{equation}
+
+Если атомная подсистема имеет бризерное решение $u_n^{(b)}(\ta)$ периода $T_{\mathrm a}$, то индуцированное поле деформации определяется как
+\begin{equation}
+\eta_n^{(b)}(\ta)=\frac{u_{n+1}^{(b)}(\ta)-u_n^{(b)}(\ta)}{a},
+\qquad
+\bar\eta_n^{(b)}(\ta)=\frac{u_{n+1}^{(b)}(\ta)-u_{n-1}^{(b)}(\ta)}{2a}.
+\label{eq:breather_strain}
+\end{equation}
+Разложим их на статическую и осциллирующую части:
+\begin{equation}
+\eta_n^{(b)}(\ta)=\eta_n^{(0)}+\delta\eta_n(\ta),
+\qquad
+\bar\eta_n^{(b)}(\ta)=\bar\eta_n^{(0)}+\delta\bar\eta_n(\ta),
+\label{eq:split_eta}
+\end{equation}
+где средние по периоду величины отвечают за статическую перенормировку магнитных параметров, а переменные части играют роль драйва.
+
+\section{Связь атомного смещения с магнитными константами}
+В статье \cite{Tereshchenko2022} exchange-strain взаимодействие вводится через зависимость обмена от расстояния между магнитными центрами:
+\begin{equation}
+J\bigl(R_{ij}+u_i-u_j\bigr)-J(R_{ij})
+\simeq
+\eval{\dv{J}{\ell}}_{\ell=R_{ij}} (u_i-u_j).
+\label{eq:exchange_article_style}
+\end{equation}
+Для нашей одномерной цепочки тот же принцип дает
+\begin{equation}
+J_n(t)=J\bigl(\ell_n(t)\bigr),
+\qquad
+D_n(t)=D\bigl(\ell_n(t)\bigr),
+\qquad
+A_n(t)=A_0+B_A\,\bar\eta_n(t).
+\label{eq:JDA_functional}
+\end{equation}
+
+То есть обмен и DM-константа рассматриваются как функции деформированной длины связи, а одноионная анизотропия получает обычную линейную магнитоупругую поправку с постоянной константой $B_A$, не зависящей от времени. Временная зависимость $A_n(t)$ возникает только потому, что сама локальная деформация $\bar\eta_n(t)$ создается движением узлов.
+
+Разложение по малой деформации около недеформированного состояния тогда принимает вид
+\begin{align}
+J_n(t) &\simeq J_0 + \eval{\dv{J}{\ell}}_{a}\,\bigl(\ell_n(t)-a\bigr)
+= J_0 + a\,J_\ell'\,\eta_n(t),
+\label{eq:J_expand}\\
+D_n(t) &\simeq D_0 + \eval{\dv{D}{\ell}}_{a}\,\bigl(\ell_n(t)-a\bigr)
+= D_0 + a\,D_\ell'\,\eta_n(t),
+\label{eq:D_expand}\\
+A_n(t) &= A_0 + B_A\,\bar\eta_n(t).
+\label{eq:A_expand}
+\end{align}
+Здесь
+\begin{equation}
+J_\ell'=\eval{\dv{J}{\ell}}_{\ell=a},
+\qquad
+D_\ell'=\eval{\dv{D}{\ell}}_{\ell=a},
+\end{equation}
+а $B_A$ --- постоянная магнитоупругая константа, связывающая одноионную анизотропию с локальной site-деформацией.
+
+В безразмерной форме удобно ввести коэффициенты чувствительности для bond-каналов и нормированную магнитоупругую константу для анизотропии:
+\begin{equation}
+\gamma_J = \frac{a}{J_0}\eval{\dv{J}{\ell}}_{a},
+\qquad
+\gamma_D = \frac{a}{2J_0}\eval{\dv{D}{\ell}}_{a},
+\qquad
+\gamma_A = \frac{B_A}{2J_0}.
+\label{eq:gamma_defs}
+\end{equation}
+Тогда вариации параметров непосредственно выражаются через бризерную деформацию.
+
+\section{Согласование времен атомной и магнитной задач}
+Как и в исходной заметке, сопоставлять нужно одно и то же физическое время $t$:
+\begin{equation}
+ t = \tau_0^{(\mathrm a)}\,\ta = t_0^{(\mathrm m)}\,\tm,
+ \qquad
+ t_0^{(\mathrm m)}=\frac{\hbar}{2J_0 S}.
+\label{eq:physical_time_relation_new}
+\end{equation}
+Отсюда
+\begin{equation}
+\ta = \rho\,\tm,
+\qquad
+\rho = \frac{t_0^{(\mathrm m)}}{\tau_0^{(\mathrm a)}}.
+\label{eq:rho_def_new}
+\end{equation}
+Если атомный бризер имеет частоту $\Omega_{\mathrm a}$ в своей переменной $\ta$, то в магнитных единицах драйв действует с частотой
+\begin{equation}
+\omega_{\mathrm d}=\rho\,\Omega_{\mathrm a}.
+\label{eq:omega_drive}
+\end{equation}
+Именно $\rho$ остается главным параметром резонансного сканирования.
+
+\section{Редуцированный спиновый гамильтониан в физической форме}
+Для магнитной подсистемы оставляем ту же структуру гамильтониана, что и в заметке и в работе о магнитных dark breathers, но заменяем коэффициенты на деформационно-модулированные:
+\begin{equation}
+\Hsp(t)= -2\sum_n J_n(t)\,\bm S_n\cdot\bm S_{n+1}
++ \sum_n A_n(t)\,(S_n^z)^2
++ \sum_n D_n(t)\,[\bm S_n\times \bm S_{n+1}]_z
+- H\sum_n S_n^z.
+\label{eq:Hspin_physical}
+\end{equation}
+
+Подставляя \eqref{eq:J_expand}--\eqref{eq:A_expand}, получаем
+\begin{align}
+J_n(t) &= J_0\Bigl[1+\gamma_J\,\eta_n^{(b)}\bigl(\rho\tm\bigr)\Bigr],
+\label{eq:J_final}\\
+D_n(t) &= D_0 + 2J_0\gamma_D\,\eta_n^{(b)}\bigl(\rho\tm\bigr),
+\label{eq:D_final}\\
+A_n(t) &= A_0 + 2J_0\gamma_A\,\bar\eta_n^{(b)}\bigl(\rho\tm\bigr)
+= A_0 + B_A\,\bar\eta_n^{(b)}\bigl(\rho\tm\bigr).
+\label{eq:A_final}
+\end{align}
+Если требуется избежать искусственного начального удара, можно умножить все добавки на адиабатический множитель
+\begin{equation}
+\chi(\tm)=1-e^{-\tm/\tau_{\mathrm{on}}}.
+\end{equation}
+Тогда в \eqref{eq:J_final}--\eqref{eq:A_final} каждая поправка просто умножается на $\chi(\tm)$.
+
+После перехода к безразмерным спинам $\m_n=\bm S_n/S$ и энергии $\E=\Hsp/(2J_0S^2)$ имеем
+\begin{equation}
+\E = -\sum_n j_n(\tm)\,\m_n\cdot\m_{n+1}
++ \sum_n b_n(\tm)\,(m_n^z)^2
++ \sum_n d_n(\tm)\,[\m_n\times\m_{n+1}]_z
+- h\sum_n m_n^z,
+\label{eq:E_dimensionless_new}
+\end{equation}
+где
+\begin{align}
+j_n(\tm) &= 1+\gamma_J\,\eta_n^{(b)}\bigl(\rho\tm\bigr), \\
+d_n(\tm) &= d_0+\gamma_D\,\eta_n^{(b)}\bigl(\rho\tm\bigr),
+\qquad d_0=\frac{D_0}{2J_0}, \\
+b_n(\tm) &= b_0+\gamma_A\,\bar\eta_n^{(b)}\bigl(\rho\tm\bigr),
+\qquad b_0=\frac{A_0}{2J_0}, \\
+h&=\frac{H}{2J_0S}.
+\end{align}
+
+\section{Уравнения движения}
+Для численного интегрирования удобно оставить векторную форму Ландау--Лифшица:
+\begin{equation}
+\dv{\m_n}{\tm} = -\m_n\times \bm h_n^{\mathrm{eff}}
+-\alpha_G\,\m_n\times\bigl(\m_n\times \bm h_n^{\mathrm{eff}}\bigr),
+\qquad
+\bm h_n^{\mathrm{eff}}=-\pdv{\E}{\m_n}.
+\label{eq:LL_equation_new}
+\end{equation}
+Из \eqref{eq:E_dimensionless_new} следует
+\begin{equation}
+\bm h_n^{\mathrm{eff}}=
+ j_{n-1}\m_{n-1}+j_n\m_{n+1}
+ + d_{n-1}(\ez\times \m_{n-1}) - d_n(\ez\times \m_{n+1})
+ + \bigl(h-2b_n m_n^z\bigr)\ez.
+\label{eq:heff_new}
+\end{equation}
+Структура уравнений не изменилась; изменилась только физическая интерпретация коэффициентов $j_n,d_n,b_n$.
+
+\section{Минимальная модель и рекомендуемая полная модель}
+Если хочется начать с самого простого теста, можно оставить только канал модуляции анизотропии:
+\begin{equation}
+j_n\equiv 1,
+\qquad d_n\equiv d_0,
+\qquad b_n(\tm)=b_0+\gamma_A\,\bar\eta_n^{(b)}(\rho\tm).
+\label{eq:minimal_model_new}
+\end{equation}
+Это уже физичнее прежней записи $A_n\propto q_{n+1}-q_n$, потому что здесь анизотропия получает стандартную локальную магнитоупругую добавку, а ее временная зависимость целиком задается деформацией узла, выраженной через производную поля смещений.
+
+Но основной рекомендуемой постановкой остается полная модель \eqref{eq:E_dimensionless_new}, поскольку:
+\begin{enumerate}
+    \item обмен и DM-взаимодействие зависят именно от межузельного расстояния и потому должны чувствовать bond-деформацию $\eta_n$;
+    \item одноионная анизотропия получает локальную линейную магнитоупругую добавку $B_A\bar\eta_n$, где сама константа $B_A$ времени не зависит;
+    \item атомный бризер создает локализованный профиль $\partial_z u$, а не глобальную однородную модуляцию, поэтому именно локальные $j_n,d_n,b_n$ соответствуют физике задачи.
+\end{enumerate}
+
+\section{Что именно изменилось по сравнению с исходной заметкой}
+Содержательно почти ничего не меняется; переписана именно физическая оболочка формул.
+
+\begin{enumerate}
+    \item Вместо переменной $q_n$ теперь используются равновесные положения $R_n$, текущие положения $r_n=R_n+u_n$ и длины связей $\ell_n=r_{n+1}-r_n$.
+    \item Драйв определяется через относительную деформацию $\eta_n=(\ell_n-a)/a\approx \partial_z u$, то есть через аналог деформационного тензора, как в статье \cite{Tereshchenko2022}.
+    \item Магнитные коэффициенты вводятся как функции геометрии $J(\ell)$ и $D(\ell)$, а для одноионной анизотропии используется линейный магнитоупругий член $B_A\bar\eta_n$.
+    \item Безразмерные коэффициенты связи приобретают прямой смысл: для обмена и DM это коэффициенты чувствительности, выраженные через производные по длине связи, а для анизотропии --- нормированная магнитоупругая константа.
+\end{enumerate}
+
+Именно в таком виде модель легче защищать как физическую: в ней явно видно, что атомный бризер сначала меняет локальную геометрию решетки, а уже эта геометрия меняет магнитный гамильтониан.
+
+\section{Итоговая формулировка задачи для кода}
+Для практического расчета удобно использовать следующую последовательность.
+\begin{enumerate}
+    \item Вычислить атомный бризер $u_n^{(b)}(\ta)$ в FPU-$\beta$ цепочке.
+    \item По нему построить
+    \begin{equation*}
+    \eta_n^{(b)}(\ta)=\frac{u_{n+1}^{(b)}(\ta)-u_n^{(b)}(\ta)}{a},
+    \qquad
+    \bar\eta_n^{(b)}(\ta)=\frac{u_{n+1}^{(b)}(\ta)-u_{n-1}^{(b)}(\ta)}{2a}.
+    \end{equation*}
+    \item Использовать эти профили в \eqref{eq:J_final}--\eqref{eq:A_final} или в их безразмерной форме в \eqref{eq:E_dimensionless_new}.
+    \item Интегрировать спиновую динамику по \eqref{eq:LL_equation_new} и искать захват в локализованный периодический режим.
+\end{enumerate}
+
+В таком варианте сохраняется вся логика исходной заметки, но запись становится существенно более физичной: вместо ``модуляции от разностей'' мы работаем с деформированной длиной связи, относительной деформацией, производными $J$ и $D$ по длине связи и прямым линейным магнитоупругим вкладом в анизотропию.
+
+\begin{thebibliography}{9}
+\bibitem{Tereshchenko2022}
+A.~A.~Tereshchenko, A.~S.~Ovchinnikov, D.~I.~Gorbunov, D.~S.~Neznakhin,
+\textit{Theory of ultrasound propagation in LuCo$_3$ near the low-spin--high-spin crossover},
+Phys. Rev. B \textbf{106}, 054417 (2022).
+
+\bibitem{Bostrem2021}
+I.~G.~Bostrem, E.~G.~Ekomasov, J.~Kishine, A.~S.~Ovchinnikov, V.~E.~Sinitsyn,
+\textit{Dark discrete breather modes in a monoaxial chiral helimagnet with easy-plane anisotropy},
+Phys. Rev. B \textbf{104}, 214420 (2021).
+\end{thebibliography}
+
+\end{document}
